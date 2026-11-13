@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+bench/out/
+*.nsys-rep
+*.sqlite
+docs/_site/
