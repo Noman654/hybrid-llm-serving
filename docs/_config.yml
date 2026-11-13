@@ -6,3 +6,5 @@ markdown: kramdown
 baseurl: /hybrid-llm-serving
 url: https://noman654.github.io
 github_username: Noman654
+kramdown:
+  toc_levels: "2"

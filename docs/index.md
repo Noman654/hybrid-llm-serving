@@ -7,6 +7,14 @@ date: 2026-11-13
 
 *Qwen3.8-27B-FP8 on vLLM 0.31: 1.72× over stock settings on one GPU (on traffic without shared prefixes), and +10% on an already-tuned 8-GPU node.*
 
+<nav class="post-toc" aria-label="Contents" markdown="1">
+<p class="post-toc-title">Contents</p>
+
+* TOC
+{:toc}
+
+</nav>
+
 Qwen3.8-27B is a *hybrid* model: most of its layers are a form of linear attention that keeps a fixed-size memory per request, instead of a cache that grows with every token. That changes where memory and time go when you serve it, and most published tuning advice assumes the other kind of model.
 
 This is a case study of making it serve faster on H100s: what worked, what didn't, and how I found out. Nothing here is a new technique. The value is in the measurements, including the ones that went against me. The change that held up best was a single config value that controls which batch sizes get CUDA graphs, and I only found it after writing a custom kernel that was 1.4× faster in isolation, seeing it give 3% in a realistic serving benchmark, and asking why.
@@ -265,4 +273,19 @@ Related: vLLM PR [#64825](https://github.com/vllm-project/vllm/pull/64825) propo
         data-loading="lazy"
         crossorigin="anonymous"
         async>
+</script>
+
+<script>
+(function () {
+  var links = {};
+  document.querySelectorAll('#markdown-toc a').forEach(function (a) { links[decodeURIComponent(a.hash.slice(1))] = a; });
+  var heads = Array.prototype.filter.call(document.querySelectorAll('h2[id]'), function (h) { return links[h.id]; });
+  if (!heads.length) return;
+  function update() {
+    var cur = heads[0];
+    for (var i = 0; i < heads.length; i++) { if (heads[i].getBoundingClientRect().top < 120) cur = heads[i]; else break; }
+    for (var k in links) links[k].classList.toggle('active', k === cur.id);
+  }
+  window.addEventListener('scroll', update, { passive: true }); update();
+})();
 </script>
