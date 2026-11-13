@@ -12,6 +12,8 @@ Code and write-up for **[Where Did the Time Go? Serving a Hybrid LLM on H100](ht
 | CUDA-graph limit 2,048 alone, 8×H100, already-tuned config, ShareGPT | **+10.4%** output tok/s |
 | Fused GDN conv1d + prep kernel | −30% kernel time, +0.8% prefill, **bit-exact** vs stock |
 
+**Key finding:** the biggest single win was one config value. Most serving steps mixed prefill with decode and were too large for vLLM's default CUDA-graph limit (512 tokens), so the CPU launched every kernel one by one and the GPU sat idle a third of the time. Raising the limit to 2,048 gave +11% on one H100. A custom decode kernel that was 1.4× faster in isolation gave about 3% end to end.
+
 The post explains why each change helps, what didn't work, and how the numbers were checked.
 
 ## Layout
@@ -46,7 +48,9 @@ docs/                   the post (GitHub Pages)
 # bit-exactness of the fused kernel (needs a GPU, no model weights)
 python kernels/test_fconv.py
 
-# the ladder on 5 GPUs (or GPUS="0 0 0 0 0" to run the steps one by one on one GPU)
+# the ladder, one step at a time on one GPU (cleanest: steps don't share the host CPU)
+GPUS="0 0 0 0 0" bash bench/run_ladder.sh
+# or all 5 steps in parallel on 5 GPUs (faster; this is how the post's ladder was run)
 bash bench/run_ladder.sh
 
 # GSM8K baseline vs replay kernel, then compare per question
