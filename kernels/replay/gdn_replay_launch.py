@@ -1,4 +1,4 @@
-"""gdn_replay_launch.py: launcher for the replay kernels (gdn_replay_kernels.py), lower host overhead for eager (mixed prefill+decode) steps.
+"""gdn_replay_launch.py: launcher for the replay kernels (gdn_replay_kernels.py), lower host overhead for no-graph (mixed prefill+decode) steps.
 
 Triton's JIT dispatch (binder + cache-key + hooks) costs ~15 us per launch on top of the driver launch. After the first
 JIT launch for a given specialization we keep the CompiledKernel and launch it directly. The specialization key is

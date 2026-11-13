@@ -1,11 +1,11 @@
 ---
 layout: post
 title: "Where Did the Time Go? Serving a Hybrid LLM on H100"
-description: "Qwen3.8-27B-FP8 on vLLM 0.31: 1.72× over stock settings on one GPU (on traffic without shared prefixes), and +10% on an already-tuned 8-GPU node."
+description: "Qwen3.8-27B-FP8 on vLLM 0.31: 1.72× over stock settings on one GPU (on traffic without shared prefixes), and +10% on an already-tuned 8-GPU node on ShareGPT traffic."
 date: 2026-11-13
 ---
 
-*Qwen3.8-27B-FP8 on vLLM 0.31: 1.72× over stock settings on one GPU (on traffic without shared prefixes), and +10% on an already-tuned 8-GPU node.*
+*Qwen3.8-27B-FP8 on vLLM 0.31: 1.72× over stock settings on one GPU (on traffic without shared prefixes), and +10% on an already-tuned 8-GPU node on ShareGPT traffic.*
 
 <nav class="post-toc" aria-label="Contents" markdown="1">
 <p class="post-toc-title">Contents</p>
@@ -38,7 +38,7 @@ So one request's GDN state, in bf16, weighs as much as **1,150 tokens of KV cach
 Two consequences follow:
 
 1. **Memory is shared between two pools.** Every byte of GDN state is a byte the KV cache can't use, and KV capacity sets how many requests run at once.
-2. **Decode is a bandwidth problem.** Each decode step reads all the weights once (~9 ms at H100's 3.35 TB/s) and reads *and writes* every running request's GDN state (19 GB each way at 256 requests, ~11.5 ms). The state traffic is larger than the weight traffic.
+2. **Decode is a bandwidth problem.** Each decode step reads all the weights once (~9 ms at the H100 SXM's 3.35 TB/s) and reads *and writes* every running request's GDN state (19 GB each way at 256 requests, ~11.5 ms). These are estimates from bytes moved, not measured DRAM traffic, but the point holds: the state traffic is larger than the weight traffic.
 
 ![Bar chart: per decode step at 256 requests, weights 30 GB read versus GDN state 19 GB read plus 19 GB written](assets/img/fig1-decode-bytes.svg)
 
@@ -87,10 +87,13 @@ Getting it working required KV and GDN state transfer over NIXL, a specific conv
 
 **Under a latency target: it won.** With a target of first token under 2 s and under 30 ms per token, on ShareGPT traffic at a fixed offered request rate (runs of about 5 minutes):
 
-| Setup (8 GPUs) | Load | Requests meeting the target |
+| Setup (8 GPUs) | Offered rate | Requests meeting the target |
 |---|---|---|
 | Normal (all GPUs do both) | 100 req/s | 18% |
-| 2 prefill + 6 decode | 145 req/s offered, 136 completed | **99.6%** |
+| 2 prefill + 6 decode | 100 req/s | **99.9%** |
+| 2 prefill + 6 decode | 145 req/s | **99.1–99.7%** (two attention backends) |
+
+Every request in these runs completed (0 failed, none dropped), so the percentages are over all requests sent, not just the ones that finished. The 145 req/s runs are from a later session than the 100 req/s runs.
 
 The nsys traces show why: decode GPUs that never see a prefill run clean steps with a p99 of 21 ms, against 69 ms when prefill is mixed in.
 
@@ -130,7 +133,7 @@ In steady-state serving, nsys showed the **GPU idle 33% of the time**. Most of t
 
 A CPU profile (py-spy) showed the main Python thread spending 43% of its time *inside the forward pass, launching kernels*, and only 17% waiting for the GPU. The CPU, not the GPU, was setting the pace.
 
-**Why?** vLLM captures CUDA graphs for batch sizes up to `max_cudagraph_capture_size`, which defaults to **512 tokens** on Hopper. A CUDA graph replays a whole step's worth of kernels with a single launch. Anything larger runs without a graph, so each of the step's hundreds of kernels is launched individually from the host.
+**Why?** vLLM captures CUDA graphs for batch sizes up to `max_cudagraph_capture_size`, which defaults to **512 tokens** on Hopper. A CUDA graph replays a whole step's worth of kernels with a single launch. Anything larger runs without a graph. In vLLM 0.31 the step still runs the torch.compile'd model, but each of its hundreds of kernels is launched individually from the host.
 
 Decode-only steps are small (≤ 256 tokens here), so they get graphs. But in real serving, most steps are *mixed*: a few prefill chunks plus all the running decodes. In my workload the median mixed step was **~770 tokens** and the 90th percentile ~1,300, and **46% of wall time** was spent in steps between 512 and 2,048 tokens. All of it ran without graphs.
 
@@ -147,7 +150,7 @@ compilation_config={"max_cudagraph_capture_size": 2048}
 | Default (512) | 67% | 142–145 s (5 runs) |
 | 2,048 | **87%** | **128–129 s (+11%)** (6 runs) |
 
-On 8×H100 with the tuned config from Section 2, on ShareGPT traffic from four parallel clients (a different benchmark from Section 2's 28.0k), the same change gave **+10.4%**: 27.8k → 30.7k output tok/s, averaged over alternating runs.
+On 8×H100 with the tuned config from Section 2, on ShareGPT traffic from four parallel clients (a different benchmark from Section 2's 28.0k), the same change gave **+10.4%**: 27.8k → 30.7k output tok/s, averaged over alternating runs. The gain depends on load: [#64825](https://github.com/vllm-project/vllm/pull/64825), which proposes a similar change as the default, measured lower time to first token but unchanged throughput for this model at concurrency 1 and 8. I only saw throughput move when many steps were larger than 512 tokens, which took hundreds of concurrent requests with varied lengths.
 
 A note on versions: this is vLLM 0.31. Newer vLLM (after [#63406](https://github.com/vllm-project/vllm/pull/63406)) has a separate capture-size setting for prefill-sized steps, and after [#51012](https://github.com/vllm-project/vllm/pull/51012) oversized steps on this model family run fully eager, so on current main the knob is named differently and the gap is likely larger.
 
@@ -166,7 +169,7 @@ Why didn't my tuning in Section 2 find this? Because that benchmark used near-eq
 
 ## 6. The whole ladder
 
-One benchmark, one GPU, one change at a time: 1,024 requests, 256 concurrent, 512-token prompts, output lengths uniform in 128–1,024.
+One benchmark, one GPU, one change at a time: 1,024 requests, 256 concurrent, 512-token prompts, output lengths uniform in 128–1,024. Each step ran as its own process on its own GPU of one 8-GPU node, all at the same time (steps 0, 3 and 4 twice), and each process measured the benchmark twice; the table shows the average. Running in parallel shares the host, which matters when the bottleneck is CPU launch overhead. The node has 192 CPU cores, about 24 per process if spread evenly. The duplicate runs of steps 0, 3 and 4 agreed within 2.2%, but they ran under the same contention, so that shows repeatability, not the absence of contention. I haven't rerun the steps one at a time. All steps use vLLM's V1 model runner in-process, because the replay kernel needs it; "stock" means default settings on that runner.
 
 ![Bar chart of serving time: stock 210.1 s, bf16 state 171.3 s, prefix cache off 144.6 s, graph limit 2,048 128.8 s, replay kernel 122.5 s](assets/img/fig5-ladder.svg)
 
@@ -184,7 +187,7 @@ The kernel's share also grew: +3% end to end in Section 4, +5% here (128.8 → 1
 
 FP8 KV cache isn't in the ladder; it is in the 8-GPU config.
 
-Step 2 is only right for traffic without shared prefixes. The part that carries over to any traffic is steps 2→4: 144.6 s → 122.5 s, **1.18×**.
+Step 2 is only right for traffic without shared prefixes. Steps 3 and 4 aren't specific to that: 144.6 s → 122.5 s, **1.18×** on this workload. They do depend on the workload: with 1,500-token prompts, where the KV cache is the limit, the graph limit was about −1% (Section 5).
 
 At node scale the replay kernel didn't hold up: it needs vLLM's older V1 model runner, and V2 with the graph limit alone (30.7k tok/s) matched V1 with graph limit plus replay (30.4k). It also gives up vLLM's fused CUDA decode kernel, which scored slightly higher on GSM8K (Section 4). So I'd ship steps 1–3 and leave the kernel out.
 
@@ -194,7 +197,7 @@ At node scale the replay kernel didn't hold up: it needs vLLM's older V1 model r
 
 - **A wrapper script silently dropped my flag.** My launch script didn't forward extra arguments, so the "graph limit" runs on 8 GPUs were really baseline runs. They showed **+13.6%**, which was run-to-run noise. I caught it because the graph-memory line in the logs didn't change. Always check that a setting took effect.
 - **Single runs lie.** One load-generating client at 2,048 concurrency varied by 6–13% between identical runs. Four parallel clients and alternating configs (A, B, A, B) fixed it.
-- **Baseline vLLM isn't deterministic.** At the default graph limit, two identical GSM8K runs agreed on only 701 of 1,319 answers. (At a 2,048 limit my later baseline runs were bit-identical, which I haven't explained.) Any "my change didn't affect quality" claim needs at least two baseline runs as the noise floor.
+- **Baseline vLLM isn't deterministic.** At the default graph limit, two identical GSM8K runs produced token-identical completions for only 701 of 1,319 questions. These runs had a 320-token output cap, which cut off about a fifth of the completions; that is why accuracy here is about 81%, not the 97% in Section 4. Where neither run was cut off (1,031 questions), only 3 final answers differed. So the text changes a lot between runs, but finished answers rarely do. (At a 2,048 limit my later baseline runs were bit-identical, which I haven't explained.) Any "my change didn't affect quality" claim needs at least two baseline runs as the noise floor.
 - **An accuracy drop that wasn't one.** bf16 state with prefix caching appeared to cut GSM8K from 96.7% to 92%. It was an evaluation artifact: near-tied first tokens flipping to end-of-sequence. The model's state was restored bit-exactly.
 
 ---
