@@ -1,5 +1,9 @@
 # hybrid-llm-serving
 
+[![Read the post](https://img.shields.io/badge/%F0%9F%93%96%20Read%20the%20post-Where%20Did%20the%20Time%20Go%3F-2a78d6?style=for-the-badge)](https://noman654.github.io/hybrid-llm-serving/)
+
+> **📖 [Read the full write-up →](https://noman654.github.io/hybrid-llm-serving/)** · 💬 comments and 👍 reactions at the end of the post
+
 Code and write-up for **[Where Did the Time Go? Serving a Hybrid LLM on H100](https://noman654.github.io/hybrid-llm-serving/)**: a case study of serving Qwen3.8-27B-FP8 (48 Gated DeltaNet layers + 16 attention layers) on vLLM 0.31.
 
 | Result (one H100 unless noted) | |
