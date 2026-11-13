@@ -245,3 +245,24 @@ Benchmark: `vllm bench serve` on ShareGPT, four clients at 512 concurrency each,
 The single-GPU benchmarks (ladder, GSM8K, ShareGPT, prefill) are `bench/` in the [code repo](https://github.com/Noman654/hybrid-llm-serving); the full config is `serve/serve.sh`.
 
 Related: vLLM PR [#64825](https://github.com/vllm-project/vllm/pull/64825) proposes raising the default on Hopper for this model family; I posted my measurements there.
+
+---
+
+## Comments and reactions
+
+<script src="https://giscus.app/client.js"
+        data-repo="Noman654/hybrid-llm-serving"
+        data-repo-id="R_kgDOVsyoUw"
+        data-category="Announcements"
+        data-category-id="DIC_kwDOVsyoU84DLBxh"
+        data-mapping="pathname"
+        data-strict="1"
+        data-reactions-enabled="1"
+        data-emit-metadata="0"
+        data-input-position="top"
+        data-theme="light"
+        data-lang="en"
+        data-loading="lazy"
+        crossorigin="anonymous"
+        async>
+</script>
