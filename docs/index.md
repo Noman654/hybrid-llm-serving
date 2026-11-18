@@ -241,7 +241,7 @@ That jump at 1,024 looked like the server hitting a wall. It wasn't. The benchma
 | Requests in the opening burst | 1.40 s | 1.87 s |
 | Every request after it | **0.13 s** | **0.20 s** |
 
-The total work is the same either way; the burst just piles it up so someone has to be last in line. The median in the first table mostly reflects how large a share of all requests the burst group is. (The burst split was measured on the same 8-GPU setup with the FA3 backend; queueing doesn't depend on the attention kernel.) Real traffic arrives at random, not in one burst and not in lockstep, so the next step is an open-loop test with random arrivals, which will show the slowdown at a lower load than this closed-loop test does.
+The total work is the same either way; the burst just piles it up so someone has to be last in line. The median in the first table mostly reflects how large a share of all requests the burst group is. (The burst split was measured on the same 8-GPU setup with the FA3 backend; queueing doesn't depend on the attention kernel.) Real traffic arrives at random, not in one burst and not in lockstep, so the next step is an open-loop test with random arrivals, which will show the slowdown at a lower load than this closed-loop test does. Thanks to [Alvaro Paco](https://www.linkedin.com/in/alvaropaco/) for pushing on this in the LinkedIn comments.
 
 ## 9. What's next
 
