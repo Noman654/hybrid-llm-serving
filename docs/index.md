@@ -226,6 +226,23 @@ The kernels got 30% faster, but they were only 3.5% of prefill time, so the whol
 
 Some well-known techniques don't apply to this setup. Meta's [DDA all-reduce](https://engineering.fb.com/2025/10/17/ai-research/scaling-llm-inference-innovations-tensor-parallelism-context-parallelism-expert-parallelism/) speeds up communication between GPUs that share one model, but with one model copy per GPU there's no all-reduce to speed up.
 
+**Throughput vs. time to first token.** Every number above is wall time for a fixed workload, which says nothing about how long a user waits for the first token. So I swept client concurrency on 8×H100 (one model copy per GPU, ShareGPT prompts):
+
+| Concurrent requests | Output tok/s | Median time to first token |
+|---|---|---|
+| 512 | 12.1k | 0.18 s |
+| 1,024 | 15.6k | 1.95 s |
+| 2,048 | 22.7k | 2.2 s |
+
+That jump at 1,024 looked like the server hitting a wall. It wasn't. The benchmark sends every request at once at the start, so the first seconds are a burst: about 128 prompts per GPU arrive together, and each step reads at most 8,192 prompt tokens, so prompts at the back of the line wait several steps. After the burst, a new request arrives only when an old one finishes, so concurrency stays the same (about 1,010 requests running throughout the 1,024 run) but only a few new prompts arrive per step, and each one fits into the next step. Splitting time to first token by when each request was sent:
+
+| | 512 concurrent | 1,024 concurrent |
+|---|---|---|
+| Requests in the opening burst | 1.40 s | 1.87 s |
+| Every request after it | **0.13 s** | **0.20 s** |
+
+The total work is the same either way; the burst just piles it up so someone has to be last in line. The median in the first table mostly reflects how large a share of all requests the burst group is. (The burst split was measured on the same 8-GPU setup with the FA3 backend; queueing doesn't depend on the attention kernel.) Real traffic arrives at random, not in one burst and not in lockstep, so the next step is an open-loop test with random arrivals, which will show the slowdown at a lower load than this closed-loop test does.
+
 ## 9. What's next
 
 - **AMD MI300X.** On AMD, vLLM runs the GDN layers through its Triton path, which took about 11% of prefill time on H100 against 2.8% for the fused kernel H100 uses by default. That's a real gap, and I haven't seen hybrid-model serving numbers published for MI300X.
