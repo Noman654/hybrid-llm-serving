@@ -69,7 +69,7 @@ Together: **about 3.4k tok/s per GPU, +26%**, and the full 8-GPU node reached 28
 
 These percentages come from a fixed 1k-in / 512-out benchmark. Section 6 re-measures the same changes on a serving workload with varied lengths, where the numbers differ, so don't multiply the two.
 
-What didn't help: other scheduler flags, FlashInfer attention, and MTP speculative decoding at high load (−7 to −17%; after the Section 5 fix it was roughly neutral, +1.5%, but cost accuracy on GSM8K, so I left it out). SGLang came in 2–3% behind vLLM.
+What didn't help: other scheduler flags, FlashInfer attention with the default bf16 KV cache (with an FP8 KV cache it's a different story: its XQA decode kernel reads FP8 directly and was **+5.5%** on the serving mix on one GPU, quality-neutral on GSM8K; it needs `nvcc` on `PATH`, or vLLM silently falls back), and MTP speculative decoding at high load (−7 to −17%; after the Section 5 fix it was roughly neutral, +1.5%, but cost accuracy on GSM8K, so I left it out). SGLang came in 2–3% behind vLLM.
 
 On traffic that *does* share prefixes (system prompts, multi-turn chat), turning it on was worth **+49%** (measured with fp32 state). "Off" is right only for traffic like my benchmark.
 
@@ -198,6 +198,8 @@ At node scale the replay kernel didn't hold up: it needs vLLM's older V1 model r
 - **A wrapper script silently dropped my flag.** My launch script didn't forward extra arguments, so the "graph limit" runs on 8 GPUs were really baseline runs. They showed **+13.6%**, which was run-to-run noise. I caught it because the graph-memory line in the logs didn't change. Always check that a setting took effect.
 - **Single runs lie.** One load-generating client at 2,048 concurrency varied by 6–13% between identical runs. Four parallel clients and alternating configs (A, B, A, B) fixed it.
 - **Baseline vLLM isn't deterministic.** At the default graph limit, two identical GSM8K runs produced token-identical completions for only 701 of 1,319 questions. These runs had a 320-token output cap, which cut off about a fifth of the completions; that is why accuracy here is about 81%, not the 97% in Section 4. Where neither run was cut off (1,031 questions), only 3 final answers differed. So the text changes a lot between runs, but finished answers rarely do. (At a 2,048 limit my later baseline runs were bit-identical, which I haven't explained.) Any "my change didn't affect quality" claim needs at least two baseline runs as the noise floor.
+- **A kernel filed in the wrong bucket.** My profile script sorted kernels by name pattern, and the FA3 attention kernel's short name is just `device_kernel`, so attention landed in "other" and the post said it was 0.2% of prefill. It's 2.7% of prefill and about 20% of a decode step.
+- **Testing a kernel in the wrong setting.** I first tried FlashInfer with a bf16 KV cache, where it doesn't help, and wrote it off. Its decode kernel is built for an FP8 KV cache, and there it's +5%.
 - **An accuracy drop that wasn't one.** bf16 state with prefix caching appeared to cut GSM8K from 96.7% to 92%. It was an evaluation artifact: near-tied first tokens flipping to end-of-sequence. The model's state was restored bit-exactly.
 
 ---
@@ -208,9 +210,9 @@ After the fix the GPU is idle about 13% of the time: 5–6% of wall time in gaps
 
 ![GPU busy 67% at the default graph limit versus 87% at 2,048](assets/img/fig4-gpu-busy.svg)
 
-**Where the kernel time goes, and how little is left in the small kernels.** A prefill profile (256 prompts × 4,096 tokens) splits GPU kernel time like this: FP8 matrix multiplies 71%, activation quantization 7%, the GDN conv1d and its prep kernel 3.5%, the GDN core 2.8%, attention 0.2%. The matrix multiplies are the job; everything I could rewrite is small.
+**Where the kernel time goes, and how little is left in the small kernels.** A prefill profile (256 prompts × 4,096 tokens) splits GPU kernel time like this: FP8 matrix multiplies 71%, activation quantization 7%, the GDN conv1d and its prep kernel 3.5%, the GDN core 2.8%, attention 2.7%. The matrix multiplies are the job; everything I could rewrite is small. Decode is different: there attention is about 20% of a step (256 requests × 1k context, FP8 KV cache) and about 11% of the serving mix. (An earlier version of this post said attention was 0.2% of prefill. My script filed the FA3 attention kernel, whose short name is `device_kernel`, under "other".)
 
-![Prefill kernel-time shares: FP8 matrix multiplies 71.1%, norms/activations/quantization 17.4%, other 5%, GDN conv1d + prep 3.5%, GDN core 2.8%, attention 0.2%](assets/img/fig6-prefill-shares.svg)
+![Prefill kernel-time shares: FP8 matrix multiplies 71.1%, norms/activations/quantization 17.4%, GDN conv1d + prep 3.5%, GDN core 2.8%, attention 2.7%, other 2.5%](assets/img/fig6-prefill-shares.svg)
 
 I tried the obvious one anyway. Stock vLLM runs the conv1d, writes its output to memory, and a second kernel reads it back to split q/k/v, L2-normalize q and k, and compute the gates. I fused the two into one Triton kernel. Two details decided whether it was worth anything:
 - **Bit-exactness.** Rounding the conv output to bf16 before the norm, as stock does, wasn't enough: about 100 of 16.7 million values still differed by one bf16 step, because my sum of squares added the 128 values in a different order. Reproducing stock's order (each thread sums 8 values, then 16 threads combine in a butterfly) made q, k, v, gates and conv state identical bit for bit, so no accuracy test was needed.

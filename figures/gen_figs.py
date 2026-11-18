@@ -159,8 +159,8 @@ def fig5():
 
 # ---------- Fig 6: prefill kernel shares ----------
 def fig6():
-    rows = [("FP8 matrix multiplies", 71.1), ("Norms, activations, quant.", 17.4), ("Other", 5.0),
-            ("GDN conv1d + prep", 3.5), ("GDN core (chunked)", 2.8), ("Attention", 0.2)]
+    rows = [("FP8 matrix multiplies", 71.1), ("Norms, activations, quant.", 17.4), ("GDN conv1d + prep", 3.5),
+            ("GDN core (chunked)", 2.8), ("Attention (FA3)", 2.7), ("Other", 2.5)]
     b = title_block("Where prefill GPU time goes", "Share of kernel time, 256 prompts × 4,096 tokens, one H100 (FlashInfer GDN prefill)")
     x0, sc, y = 210, 5.6, 84
     for g in range(0, 81, 20):
@@ -172,7 +172,7 @@ def fig6():
         b += text(x0 - 12, yy + 15, lab, "t2", 13, "end") + hbar(x0, yy, p * sc, 20, c) + text(x0 + p * sc + 8, yy + 15, f"{p}%", "t1", 13)
     b += text(24, 320, "We made the highlighted kernels 30% faster, bit-exactly. End-to-end prefill: +0.8%, as their 3.5% share predicts.", "t2", 12)
     svg("fig6-prefill-shares.svg", 338, b, "Where prefill GPU time goes",
-        "Bar chart of prefill kernel time shares: FP8 GEMM 71.1%, norms/activations/quant 17.4%, other 5%, conv1d+prep 3.5%, GDN core 2.8%, attention 0.2%.")
+        "Bar chart of prefill kernel time shares: FP8 GEMM 71.1%, norms/activations/quant 17.4%, conv1d+prep 3.5%, GDN core 2.8%, attention 2.7%, other 2.5%.")
 
 
 for f in (fig1, fig2, fig3, fig4, fig5, fig6):
