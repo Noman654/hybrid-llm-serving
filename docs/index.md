@@ -241,18 +241,20 @@ That jump at 1,024 looked like the server hitting a wall. It wasn't. The benchma
 | | 512 concurrent | 1,024 concurrent |
 |---|---|---|
 | Requests in the opening burst | 1.40 s | 1.87 s |
-| Every request after it | **0.13 s** | **0.20 s** |
+| Every request after it | **0.13 s** | **0.20 s** (a second run: 1.0 s) |
 
-The total work is the same either way; the burst just piles it up so someone has to be last in line. The median in the first table mostly reflects how large a share of all requests the burst group is. (The burst split was measured on the same 8-GPU setup with the FA3 backend; queueing doesn't depend on the attention kernel.)
+The total work is the same either way; the burst just piles it up so someone has to be last in line. The median in the first table mostly reflects how large a share of all requests the burst group is. (The burst split was measured on the same 8-GPU setup with the FA3 backend. A second, clean run with the best config reproduced 512 concurrent: 1.16 s in the burst, 0.17 s after. At 1,024 it didn't: 1.77 s in the burst but 1.0 s after, with only ~920 of 1,024 requests ever reaching the server, which points at my load generator rather than the server. I haven't settled it, so treat the 1,024 after-burst number as unconfirmed.)
 
 Real traffic arrives at random, not in one burst and not in lockstep, so I also ran an open-loop test: requests sent at random (Poisson) times at a fixed rate for 60 s, on a fresh 8×H100 server with the best config (prompts up to 1,024 tokens). Time to first token is measured on requests sent between 10 and 50 s:
 
-| Requests/s | Output tok/s | p50 | p95 | Requests running | Waiting |
-|---|---|---|---|---|---|
-| 120 | 19.0k | 0.14 s | 0.23 s | 842 | 0 |
-| 160 | 23.5k | 0.20 s | 0.41 s | 1,570 | 0 |
-| 180 | 26.2k | 0.25 s | 0.64 s | 1,986 | 0 |
-| 200 | 27.6k | 0.54 s | **3.8 s** | 2,044 (all slots) | 993, growing |
+| Requests/s | Output tok/s | TTFT p50 | TTFT p95 | Time per output token (p50) | Requests running | Waiting |
+|---|---|---|---|---|---|---|
+| 120 | 19.0k | 0.14 s | 0.23 s | | 842 | 0 |
+| 160 | 23.5k | 0.20 s | 0.41–0.45 s | 44 ms | 1,570 | 0 |
+| 180 | 26.2k | 0.25 s | 0.63–0.68 s | 48 ms | 1,986 | 0 |
+| 200 | 27.6k | 0.54 s | **2.5–3.8 s** | 56 ms | 2,044 (all slots) | 993, growing |
+
+Ranges are over 2–3 runs. vLLM's own `vllm bench serve` with Poisson arrivals gives the same picture: p95 0.72 s at 180 requests/s, 4.0 s at 200. The cost of packing in 2,000 requests shows up in the per-token time: about 48 ms, so each user reads about 20 tokens/s.
 
 Random arrivals didn't bring the slowdown earlier: up to 180 requests/s, each step's 8,192-token budget absorbs the randomness and nothing waits. The wall is the slot limit. At 200 requests/s all 2,048 slots (256 per GPU) are full, the waiting queue grows without bound, and p95 jumps to 3.8 s. (A closed-loop run at 2,048 concurrency agrees: 26.2k tok/s, with requests queueing the whole time.)
 
@@ -261,7 +263,7 @@ Raising the limit to 384 sequences per GPU moves the wall about 10%:
 | Requests/s | 256 per GPU: p95 | 384 per GPU: p95 | 384 per GPU: output tok/s |
 |---|---|---|---|
 | 180 | 0.64 s | 0.66 s | 26.2k |
-| 200 | 3.8 s | **0.89 s** | 28.1k |
+| 200 | 2.5–3.8 s | **0.85–0.89 s** | 28.1k |
 | 220 | | 4.1 s | 29.5k |
 
 At 220 requests/s the KV cache is 100% full with about 2,700 requests running, below the 3,072 slots. So with more slots, memory for the KV cache becomes the limit instead. For this workload the capacity is about 180 requests/s (26k output tok/s) at the default limit and about 200 requests/s (28k tok/s) at 384, keeping p95 time to first token under 1 s. Thanks to [Alvaro Paco](https://www.linkedin.com/in/alvaropaco/) for pushing on this in the LinkedIn comments.
